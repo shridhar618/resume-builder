@@ -1,10 +1,22 @@
+# env / data
 .env
+.env*.local
 instance/
+*.db
+*.sqlite3
+
+# node / next
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# legacy python
 __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
 venv/
+
 .DS_Store
-*.db
-*.sqlite3
