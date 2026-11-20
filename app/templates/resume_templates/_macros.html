@@ -1,0 +1,6 @@
+{%- macro href(u) -%}
+{%- if u.startswith('http://') or u.startswith('https://') -%}{{ u }}
+{%- elif '@' in u and ' ' not in u -%}mailto:{{ u }}
+{%- else -%}https://{{ u }}{%- endif -%}
+{%- endmacro -%}
+{%- macro dates(it) -%}{{ it.start }}{% if it.start and it.end %} – {% endif %}{{ it.end }}{%- endmacro -%}

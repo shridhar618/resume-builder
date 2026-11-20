@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Sign in · ResumeAI{% endblock %}
+{% block content %}
+<main class="auth-wrap">
+  <div class="card auth-card">
+    <h1>Welcome back</h1>
+    <p class="muted">Sign in to edit your resumes.</p>
+    <form method="post" class="stack" autocomplete="on">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div>
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" value="{{ email }}" required autofocus autocomplete="email">
+      </div>
+      <div>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required autocomplete="current-password">
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+    </form>
+    <hr class="divider">
+    <p class="small muted">New here? <a href="{{ url_for('auth.register') }}">Create an account</a></p>
+  </div>
+</main>
+{% endblock %}

@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}My resumes · ResumeAI{% endblock %}
+{% block content %}
+<main class="container">
+  <div class="row" style="margin-bottom:22px">
+    <div>
+      <h1 style="margin:0">My resumes</h1>
+      <p class="muted" style="margin:4px 0 0">
+        AI: <span class="badge badge-ai">{{ ai_provider() }}</span>
+        {% if ai_provider() == 'offline' %}<span class="small">— built-in suggestions; add an API key in <code>.env</code> for full AI.</span>{% endif %}
+      </p>
+    </div>
+    <span class="spacer"></span>
+    <button class="btn btn-primary" type="button" data-open-dialog="new-dialog">+ New resume</button>
+  </div>
+
+  {% if resumes %}
+  <div class="resume-grid">
+    {% for r in resumes %}
+    <div class="card resume-card">
+      <a class="thumb" href="{{ url_for('resumes.editor', resume_id=r.id) }}" aria-label="Edit {{ r.title }}">
+        <iframe src="{{ url_for('resumes.preview', resume_id=r.id) }}" loading="lazy" tabindex="-1" title="Preview"></iframe>
+      </a>
+      <div class="body">
+        <a class="title" href="{{ url_for('resumes.editor', resume_id=r.id) }}">{{ r.title }}</a>
+        <div class="small muted"><span class="badge">{{ templates[r.template].name if r.template in templates else r.template }}</span> · edited {{ r.updated_at[:16] }} UTC</div>
+        <div class="row" style="gap:6px;margin-top:auto">
+          <a class="btn btn-sm" href="{{ url_for('resumes.editor', resume_id=r.id) }}">Edit</a>
+          <a class="btn btn-sm" href="{{ url_for('resumes.pdf', resume_id=r.id) }}">PDF</a>
+          <form class="inline" method="post" action="{{ url_for('resumes.duplicate', resume_id=r.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-ghost" type="submit" title="Duplicate">Copy</button>
+          </form>
+          <form class="inline" method="post" action="{{ url_for('resumes.delete', resume_id=r.id) }}" data-confirm="Delete “{{ r.title }}”? This can't be undone.">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-ghost" type="submit" title="Delete">Delete</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card empty">
+    <h2>No resumes yet</h2>
+    <p class="muted">Start from your profile, or from a filled-in sample to see how it works.</p>
+    <button class="btn btn-primary" type="button" data-open-dialog="new-dialog">Create your first resume</button>
+  </div>
+  {% endif %}
+</main>
+
+<dialog id="new-dialog">
+  <form method="post" action="{{ url_for('resumes.create') }}" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <h2>New resume</h2>
+    <div>
+      <label for="title">Name it</label>
+      <input id="title" name="title" type="text" placeholder="e.g. Backend Engineer – Razorpay" maxlength="100" required>
+    </div>
+    <div>
+      <label>Template</label>
+      <div class="template-pick">
+        {% for key, t in templates.items() %}
+        <label title="{{ t.description }}"><input type="radio" name="template" value="{{ key }}" {{ 'checked' if loop.first }}>{{ t.name }}</label>
+        {% endfor %}
+      </div>
+    </div>
+    <div>
+      <label>Start from</label>
+      <div class="template-pick" style="grid-template-columns:1fr 1fr">
+        <label><input type="radio" name="start_from" value="profile" checked>My profile</label>
+        <label><input type="radio" name="start_from" value="sample">Sample content</label>
+      </div>
+    </div>
+    <div class="row">
+      <span class="spacer"></span>
+      <button class="btn" type="button" data-close-dialog>Cancel</button>
+      <button class="btn btn-primary" type="submit">Create</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/app.js') }}"></script>{% endblock %}

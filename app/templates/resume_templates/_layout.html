@@ -1,0 +1,98 @@
+{#- Shared resume markup. Each template extends this and supplies CSS + header.
+    Mirrors pdf_export.py so the live preview matches the downloaded PDF. -#}
+{%- from "resume_templates/_macros.html" import href, dates -%}
+{%- set p = r.personal -%}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ p.full_name or 'Resume' }}</title>
+<style>
+  @page { size: A4; margin: 0; }
+  html, body { margin: 0; background: #fff; }
+  .page { width: 794px; min-height: 1123px; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .page a { color: inherit; text-decoration: none; }
+  .page ul { margin: 2px 0 0; padding-left: 16px; }
+  .page li { margin: 1px 0; }
+  .entry { margin-bottom: 7px; break-inside: avoid; }
+  .entry-top { display: flex; justify-content: space-between; gap: 12px; }
+  .entry-dates { white-space: nowrap; }
+  .placeholder { color: #9aa1ac; font-style: italic; }
+  {% block style %}{% endblock %}
+</style>
+</head>
+<body>
+<div class="page">
+  {% block header %}{% endblock %}
+  <div class="content">
+  {% if r.summary %}
+  <section><h2>Summary</h2><p class="summary">{{ r.summary }}</p></section>
+  {% endif %}
+
+  {% if r.experience %}
+  <section><h2>Experience</h2>
+    {% for e in r.experience %}
+    <div class="entry">
+      <div class="entry-top">
+        <div class="entry-main"><div class="entry-title">{{ e.role }}</div>
+          {% if e.company or e.location %}<div class="entry-sub">{{ [e.company, e.location]|select|join(', ') }}</div>{% endif %}</div>
+        <div class="entry-dates">{{ dates(e) }}</div>
+      </div>
+      {% if e.bullets %}<ul>{% for b in e.bullets %}<li>{{ b }}</li>{% endfor %}</ul>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if r.projects %}
+  <section><h2>Projects</h2>
+    {% for pr in r.projects %}
+    <div class="entry">
+      <div class="entry-top">
+        <div class="entry-main"><div class="entry-title">{{ pr.name }}</div>
+          {% if pr.tech or pr.link %}<div class="entry-sub">{{ pr.tech }}{% if pr.tech and pr.link %} · {% endif %}{% if pr.link %}<a class="link" href="{{ href(pr.link) }}">{{ pr.link }}</a>{% endif %}</div>{% endif %}</div>
+        <div class="entry-dates"></div>
+      </div>
+      {% if pr.bullets %}<ul>{% for b in pr.bullets %}<li>{{ b }}</li>{% endfor %}</ul>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if r.education %}
+  <section><h2>Education</h2>
+    {% for ed in r.education %}
+    <div class="entry">
+      <div class="entry-top">
+        <div class="entry-main"><div class="entry-title">{{ ed.degree }}</div>
+          <div class="entry-sub">{{ [ed.school, ed.location]|select|join(', ') }}{% if ed.score %} · {{ ed.score }}{% endif %}</div></div>
+        <div class="entry-dates">{{ dates(ed) }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if r.skills %}
+  <section><h2>Skills</h2>
+    {% for s in r.skills %}<p class="skill-line">{% if s.category %}<b>{{ s.category }}:</b> {% endif %}{{ s['items']|join(', ') }}</p>{% endfor %}
+  </section>
+  {% endif %}
+
+  {% if r.certifications %}
+  <section><h2>Certifications</h2>
+    {% for c in r.certifications %}<p class="skill-line"><b>{{ c.name }}</b>{% if c.issuer or c.date %} — {{ [c.issuer, c.date]|select|join(' · ') }}{% endif %}</p>{% endfor %}
+  </section>
+  {% endif %}
+
+  {% if r.achievements %}
+  <section><h2>Achievements</h2><ul class="ach">{% for a in r.achievements %}<li>{{ a }}</li>{% endfor %}</ul></section>
+  {% endif %}
+
+  {% if not (r.summary or r.experience or r.projects or r.education or r.skills) %}
+  <p class="placeholder">Start filling in sections on the left — the preview updates as you type.</p>
+  {% endif %}
+  </div>
+</div>
+</body>
+</html>
