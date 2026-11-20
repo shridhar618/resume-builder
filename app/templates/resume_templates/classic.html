@@ -1,0 +1,24 @@
+{% extends "resume_templates/_layout.html" %}
+{% from "resume_templates/_macros.html" import href %}
+{% block style %}
+  .page { font-family: "Times New Roman", Times, serif; color: #000; font-size: 14px; line-height: 1.32; padding: 68px; }
+  .hdr { text-align: center; border-bottom: 1.8px solid #000; padding-bottom: 8px; }
+  .hdr h1 { margin: 0; font-size: 29px; }
+  .hdr .headline { font-style: italic; font-size: 16px; }
+  .hdr .contact { font-size: 13.3px; }
+  .hdr .contact span + span::before { content: " · "; }
+  h2 { font-size: 16px; text-transform: uppercase; margin: 13px 0 6px; padding-bottom: 1px; border-bottom: .7px solid #000; }
+  .entry-title { font-weight: bold; font-size: 14.6px; }
+  .entry-sub { font-style: italic; font-size: 14px; }
+  .entry-dates { font-size: 14px; }
+  .summary, .skill-line { margin: 0 0 3px; }
+{% endblock %}
+{% block header %}{% set p = r.personal %}
+<div class="hdr">
+  <h1>{{ p.full_name or 'Your Name' }}</h1>
+  {% if p.headline %}<div class="headline">{{ p.headline }}</div>{% endif %}
+  <div class="contact">
+    {% for f in ['email','phone','location','website','linkedin','github'] if p[f] %}<span>{% if f in ['email','website','linkedin','github'] %}<a href="{{ href(p[f]) }}">{{ p[f] }}</a>{% else %}{{ p[f] }}{% endif %}</span>{% endfor %}
+  </div>
+</div>
+{% endblock %}

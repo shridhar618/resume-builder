@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<main class="container">
+  <section class="hero">
+    <h1>Build a resume recruiters actually read</h1>
+    <p>Pick a template, let AI tighten your summary and bullet points, check it against a job description, and download a clean, ATS-friendly PDF.</p>
+    <div class="row" style="justify-content:center">
+      <a class="btn btn-primary" href="{{ url_for('auth.register') }}">Get started — it's free</a>
+      <a class="btn" href="{{ url_for('auth.login') }}">Sign in</a>
+    </div>
+  </section>
+  <section class="grid-3">
+    <div class="card feature"><div class="icon">✨</div><h3>AI writing help</h3><p class="muted">Generate summaries, rewrite weak bullets with strong verbs and metrics, and get skill suggestions for your target role.</p></div>
+    <div class="card feature"><div class="icon">🎯</div><h3>Job-description match</h3><p class="muted">Paste a JD to see a keyword match score, what's missing, and concrete tailoring tips.</p></div>
+    <div class="card feature"><div class="icon">📄</div><h3>{{ templates|length }} templates, real PDFs</h3><p class="muted">{% for k, t in templates.items() %}{{ t.name }}{{ ", " if not loop.last }}{% endfor %} — switch anytime with a live preview. PDFs contain real, selectable text.</p></div>
+  </section>
+</main>
+{% endblock %}
