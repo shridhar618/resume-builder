@@ -1,7 +1,37 @@
 "use client";
 /* Resume editor: form state, debounced autosave, live preview, and the AI suggestion panels. */
 import Link from "next/link";
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  AlignLeft,
+  ArrowDown,
+  ArrowLeft,
+  ArrowUp,
+  Award,
+  Briefcase,
+  ChevronDown,
+  CircleAlert,
+  CircleCheck,
+  Download,
+  Eye,
+  FolderGit2,
+  GraduationCap,
+  Lightbulb,
+  LoaderCircle,
+  Maximize2,
+  Minus,
+  PenLine,
+  Plus,
+  Sparkles,
+  Target,
+  Trash2,
+  Trophy,
+  UserRound,
+  Wand2,
+  Wrench,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { ResumeView } from "./ResumeView";
 import { TEMPLATES, isTemplate, type ResumeData, type TemplateKey } from "@/lib/resumeModel";
 
@@ -18,32 +48,61 @@ type AIState = {
 type ListSec = "experience" | "projects" | "education" | "certifications";
 type AnyItem = Record<string, string | string[]>;
 
-const SECTIONS: Record<ListSec, { label: string; fields: [string, string][]; bullets?: boolean; blank: () => AnyItem }> = {
+const SECTIONS: Record<
+  ListSec,
+  { label: string; icon: LucideIcon; nameField: string; fields: [string, string, string?][]; bullets?: boolean; blank: () => AnyItem }
+> = {
   experience: {
     label: "Experience",
-    fields: [["role", "Job title"], ["company", "Company"], ["location", "Location"], ["start", "Start (e.g. Jan 2025)"], ["end", "End (or Present)"]],
+    icon: Briefcase,
+    nameField: "role",
+    fields: [["role", "Job title", "Software Engineer"], ["company", "Company", "Acme Corp"], ["location", "Location"], ["start", "Start", "Jan 2025"], ["end", "End", "Present"]],
     bullets: true,
     blank: () => ({ role: "", company: "", location: "", start: "", end: "", bullets: [""] }),
   },
   projects: {
     label: "Projects",
-    fields: [["name", "Project name"], ["tech", "Tech stack"], ["link", "Link (GitHub / demo)"]],
+    icon: FolderGit2,
+    nameField: "name",
+    fields: [["name", "Project name"], ["tech", "Tech stack", "React, Node.js"], ["link", "Link", "github.com/you/project"]],
     bullets: true,
     blank: () => ({ name: "", tech: "", link: "", bullets: [""] }),
   },
   education: {
     label: "Education",
-    fields: [["degree", "Degree"], ["school", "College / university"], ["location", "Location"], ["score", "CGPA / %"], ["start", "Start year"], ["end", "End year"]],
+    icon: GraduationCap,
+    nameField: "degree",
+    fields: [["degree", "Degree", "B.Tech, Computer Science"], ["school", "College / university"], ["location", "Location"], ["score", "CGPA / %"], ["start", "Start year"], ["end", "End year"]],
     blank: () => ({ degree: "", school: "", location: "", start: "", end: "", score: "" }),
   },
   certifications: {
     label: "Certifications",
+    icon: Award,
+    nameField: "name",
     fields: [["name", "Certification"], ["issuer", "Issuer"], ["date", "Date"]],
     blank: () => ({ name: "", issuer: "", date: "" }),
   },
 };
 
 const PAGE_W = 794;
+
+/** A rough 0–100 completeness score plus the most useful next step. */
+function strength(d: ResumeData): { score: number; tip: string | null } {
+  const bullets = [...d.experience, ...d.projects].flatMap((e) => e.bullets).filter((b) => b.trim());
+  const skillCount = d.skills.reduce((n, g) => n + g.items.length, 0);
+  const checks: [boolean, number, string][] = [
+    [Boolean(d.personal.full_name && d.personal.headline), 10, "Add your name and a one-line headline."],
+    [Boolean(d.personal.email || d.personal.phone), 10, "Add an email or phone number so recruiters can reach you."],
+    [d.summary.trim().length >= 80, 15, "Write a 2–3 sentence summary (try ✨ Generate with AI)."],
+    [d.experience.length > 0 || d.projects.length > 0, 20, "Add at least one experience or project."],
+    [bullets.length >= 3, 15, "Describe your work with 3+ bullet points."],
+    [bullets.length > 0 && bullets.filter((b) => /\d/.test(b)).length / bullets.length >= 0.5, 10, "Add numbers to your bullets — metrics stand out."],
+    [d.education.length > 0, 10, "Add your education."],
+    [skillCount >= 6, 10, "List at least 6 skills (try ✨ Suggest skills)."],
+  ];
+  const score = checks.reduce((s, [ok, w]) => s + (ok ? w : 0), 0);
+  return { score, tip: checks.find(([ok]) => !ok)?.[2] ?? null };
+}
 
 export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: string; provider: string }) {
   const [title, setTitle] = useState(resume.title);
@@ -52,7 +111,8 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
   const [open, setOpen] = useState(() => new Set(["personal", "summary", "experience"]));
   const [ai, setAi] = useState<Record<string, AIState>>({});
   const [jobDescription, setJobDescription] = useState("");
-  const [saveState, setSaveState] = useState<{ text: string; cls: string }>({ text: "Saved", cls: "" });
+  const [saveState, setSaveState] = useState<"saved" | "unsaved" | "saving" | "error">("saved");
+  const [view, setView] = useState<"edit" | "preview">("edit");
 
   // ------------------------------------------------------------------ autosave
   const latest = useRef({ title, template, data });
@@ -70,7 +130,7 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
     }
     saving.current = true;
     dirty.current = false;
-    setSaveState({ text: "Saving…", cls: "saving" });
+    setSaveState("saving");
     try {
       const res = await fetch(`/api/resumes/${resume.id}`, {
         method: "PUT",
@@ -82,10 +142,10 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
         return;
       }
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
-      if (!dirty.current) setSaveState({ text: "Saved", cls: "" });
+      if (!dirty.current) setSaveState("saved");
     } catch {
       dirty.current = true;
-      setSaveState({ text: "Save failed — retrying", cls: "error" });
+      setSaveState("error");
       timer.current = setTimeout(save, 4000);
     } finally {
       saving.current = false;
@@ -99,7 +159,7 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
   const scheduleSave = useCallback(
     (delay = 700) => {
       dirty.current = true;
-      setSaveState({ text: "Unsaved…", cls: "saving" });
+      setSaveState("unsaved");
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(save, delay);
     },
@@ -177,7 +237,24 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
       return n;
     });
 
-  // ------------------------------------------------------------------ render pieces
+  // ------------------------------------------------------------------ list helpers
+  function move(sec: ListSec, i: number, dir: number) {
+    const to = i + dir;
+    update((d) => {
+      const l = items(d, sec);
+      if (to < 0 || to >= l.length) return;
+      [l[i], l[to]] = [l[to], l[i]];
+    }, 300);
+    // AI panels are keyed by position; drop the ones that would now point at the wrong entry.
+    setAi((a) => Object.fromEntries(Object.entries(a).filter(([k]) => k !== `${sec}.${i}` && k !== `${sec}.${to}`)));
+  }
+
+  function removeItem(sec: ListSec | "skills", i: number) {
+    if (!window.confirm("Remove this entry?")) return;
+    update((d) => (d[sec] as unknown[]).splice(i, 1), 300);
+    setAi((a) => Object.fromEntries(Object.entries(a).filter(([k]) => !k.startsWith(sec + "."))));
+  }
+
   const sectionProps = { open, setOpen };
 
   function bulletsEditor(sec: ListSec, i: number, item: AnyItem) {
@@ -187,9 +264,15 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
     const p = ai[key];
     return (
       <>
-        <label style={{ marginTop: 10 }}>Bullet points</label>
+        <div className="sub-label">
+          <span>Bullet points</span>
+          <button className="btn btn-sm btn-ai" type="button" onClick={() => requestAI("bullets", key)}>
+            <Wand2 size={14} /> Improve with AI
+          </button>
+        </div>
         {bullets.map((b, j) => (
           <div className="bullet-row" key={j}>
+            <span className="bullet-dot" aria-hidden />
             <textarea
               aria-label={`Bullet ${j + 1}`}
               value={b}
@@ -199,20 +282,17 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
                 update((d) => ((items(d, sec)[i].bullets as string[])[j] = v));
               }}
             />
-            <button className="icon-btn danger" type="button" title="Remove bullet" onClick={() => update((d) => (items(d, sec)[i].bullets as string[]).splice(j, 1), 300)}>
-              ✕
+            <button className="icon-btn danger" type="button" title="Remove bullet" aria-label="Remove bullet" onClick={() => update((d) => (items(d, sec)[i].bullets as string[]).splice(j, 1), 300)}>
+              <X size={16} />
             </button>
           </div>
         ))}
-        <div className="row" style={{ gap: 6 }}>
-          <button className="btn btn-sm" type="button" onClick={() => update((d) => (items(d, sec)[i].bullets as string[]).push(""), 300)}>
-            + Bullet
-          </button>
-          <button className="btn btn-sm btn-ai" type="button" onClick={() => requestAI("bullets", key)}>
-            ✨ Improve with AI
+        <div className="add-row">
+          <button className="btn btn-sm btn-add" type="button" onClick={() => update((d) => (items(d, sec)[i].bullets as string[]).push(""), 300)}>
+            <Plus size={14} /> Bullet
           </button>
         </div>
-        <AiPanelBox state={ai[key]} onClose={() => closeAi(key)}>
+        <AiPanelBox state={p} onClose={() => closeAi(key)}>
           {(s, k) => (
             <div className="ai-suggestion">
               <p>{s}</p>
@@ -247,7 +327,7 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
                 closeAi(key);
               }}
             >
-              Replace all bullets
+              <Sparkles size={14} /> Replace all bullets
             </button>
           </div>
         )}
@@ -258,72 +338,58 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
   function listSection(sec: ListSec) {
     const cfg = SECTIONS[sec];
     const list = items(data, sec);
+    const noun = cfg.label.toLowerCase().replace(/s$/, "");
     return (
-      <SectionBox {...sectionProps} id={sec} title={cfg.label} count={list.length}>
+      <SectionBox {...sectionProps} id={sec} icon={cfg.icon} title={cfg.label} count={list.length}>
         {list.map((item, i) => (
           <div className="item" key={i}>
             <div className="item-head">
-              #{i + 1} <span className="spacer" />
-              <button className="icon-btn" type="button" title="Move up" disabled={i === 0} onClick={() => move(sec, i, -1)}>
-                ↑
+              <span className="item-name">{(item[cfg.nameField] as string) || `${cfg.label.replace(/s$/, "")} ${i + 1}`}</span>
+              <span className="spacer" />
+              <button className="icon-btn sm" type="button" title="Move up" aria-label="Move up" disabled={i === 0} onClick={() => move(sec, i, -1)}>
+                <ArrowUp size={15} />
               </button>
-              <button className="icon-btn" type="button" title="Move down" disabled={i === list.length - 1} onClick={() => move(sec, i, 1)}>
-                ↓
+              <button className="icon-btn sm" type="button" title="Move down" aria-label="Move down" disabled={i === list.length - 1} onClick={() => move(sec, i, 1)}>
+                <ArrowDown size={15} />
               </button>
-              <button className="icon-btn danger" type="button" title="Remove" onClick={() => removeItem(sec, i)}>
-                🗑
+              <button className="icon-btn sm danger" type="button" title="Remove" aria-label="Remove" onClick={() => removeItem(sec, i)}>
+                <Trash2 size={15} />
               </button>
             </div>
             <div className="grid-2">
-              {cfg.fields.map(([f, label]) => (
-                <FieldBox key={f} label={label} value={item[f] as string} onChange={(v) => update((d) => (items(d, sec)[i][f] = v))} />
+              {cfg.fields.map(([f, label, ph]) => (
+                <FieldBox key={f} label={label} placeholder={ph} value={item[f] as string} onChange={(v) => update((d) => (items(d, sec)[i][f] = v))} />
               ))}
             </div>
             {cfg.bullets && bulletsEditor(sec, i, item)}
           </div>
         ))}
         <button
-          className="btn btn-sm"
+          className="btn btn-sm btn-add"
           type="button"
           onClick={() => {
             update((d) => items(d, sec).push(cfg.blank()), 300);
             setOpen((o) => new Set(o).add(sec));
           }}
         >
-          + Add {cfg.label.toLowerCase().replace(/s$/, "")}
+          <Plus size={14} /> Add {noun}
         </button>
       </SectionBox>
     );
   }
 
-  function move(sec: ListSec, i: number, dir: number) {
-    const to = i + dir;
-    update((d) => {
-      const l = items(d, sec);
-      if (to < 0 || to >= l.length) return;
-      [l[i], l[to]] = [l[to], l[i]];
-    }, 300);
-    // AI panels are keyed by position; drop the ones that would now point at the wrong entry.
-    setAi((a) => Object.fromEntries(Object.entries(a).filter(([k]) => k !== `${sec}.${i}` && k !== `${sec}.${to}`)));
-  }
-
-  function removeItem(sec: ListSec | "skills", i: number) {
-    if (!window.confirm("Remove this entry?")) return;
-    update((d) => (d[sec] as unknown[]).splice(i, 1), 300);
-    setAi((a) => Object.fromEntries(Object.entries(a).filter(([k]) => !k.startsWith(sec + "."))));
-  }
-
-  // ------------------------------------------------------------------ preview scaling
+  // ------------------------------------------------------------------ preview scaling + zoom
   const paneRef = useRef<HTMLElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = useState(1);
+  const [fit, setFit] = useState(1);
+  const [zoom, setZoom] = useState<number | "fit">("fit");
   const [pageH, setPageH] = useState(1123);
   useLayoutEffect(() => {
     const pane = paneRef.current;
     const page = pageRef.current;
     if (!pane || !page) return;
     const measure = () => {
-      setScale(Math.min(1, (pane.clientWidth - 48) / PAGE_W));
+      if (pane.clientWidth) setFit(Math.min(1, Math.max(0.3, (pane.clientWidth - 48) / PAGE_W)));
       setPageH(page.offsetHeight);
     };
     measure();
@@ -332,18 +398,27 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
     ro.observe(page);
     return () => ro.disconnect();
   }, []);
+  const scale = zoom === "fit" ? fit : zoom;
+  const stepZoom = (d: number) => setZoom(Math.round(Math.min(2, Math.max(0.3, scale + d)) * 10) / 10);
 
   // ------------------------------------------------------------------ JSX
   const jd = ai.jd;
   const d = data;
+  const st = useMemo(() => strength(data), [data]);
+  const SAVE = {
+    saved: { icon: <CircleCheck size={13} />, text: "Saved", cls: "" },
+    unsaved: { icon: <PenLine size={13} />, text: "Unsaved…", cls: "saving" },
+    saving: { icon: <LoaderCircle size={13} className="spin" />, text: "Saving…", cls: "saving" },
+    error: { icon: <CircleAlert size={13} />, text: "Save failed — retrying", cls: "error" },
+  }[saveState];
 
   return (
-    <div className="editor-shell">
+    <div className="editor-shell" data-view={view}>
       <section className="editor-pane" aria-label="Resume editor">
         <div className="editor-toolbar">
-          <div className="row" style={{ gap: 8 }}>
+          <div className="toolbar-row">
             <Link className="icon-btn" href="/dashboard" title="Back to my resumes" aria-label="Back">
-              ←
+              <ArrowLeft size={18} />
             </Link>
             <input
               className="title-input"
@@ -357,41 +432,66 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
                 scheduleSave();
               }}
             />
-            <span className={`save-state ${saveState.cls}`}>{saveState.text}</span>
-          </div>
-          <div className="row" style={{ gap: 8 }}>
-            <label htmlFor="template" style={{ margin: 0 }}>
-              Template
-            </label>
-            <select
-              id="template"
-              style={{ width: "auto" }}
-              value={template}
-              onChange={(e) => {
-                if (!isTemplate(e.target.value)) return;
-                setTemplate(e.target.value);
-                latest.current = { ...latest.current, template: e.target.value };
-                scheduleSave(0);
-              }}
-            >
-              {Object.entries(TEMPLATES).map(([k, t]) => (
-                <option key={k} value={k}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-            <span className="spacer" />
-            <span className="badge badge-ai" title="AI provider">
-              AI: {provider}
+            <span className={`save-state ${SAVE.cls}`} role="status">
+              {SAVE.icon}
+              {SAVE.text}
             </span>
-            <a className="btn btn-primary btn-sm" href={`/resumes/${resume.id}/pdf`} onClick={downloadPdf}>
-              ⬇ Download PDF
+          </div>
+          <div className="toolbar-row">
+            <div className="segmented" role="group" aria-label="Template">
+              {(Object.entries(TEMPLATES) as [TemplateKey, (typeof TEMPLATES)[TemplateKey]][]).map(([k, t]) => (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={template === k}
+                  title={t.description}
+                  onClick={() => {
+                    if (!isTemplate(k) || k === template) return;
+                    setTemplate(k);
+                    latest.current = { ...latest.current, template: k };
+                    scheduleSave(0);
+                  }}
+                >
+                  {t.name}
+                </button>
+              ))}
+            </div>
+            <span className="spacer" />
+            <div className="segmented view-toggle" role="group" aria-label="View">
+              <button type="button" aria-pressed={view === "edit"} onClick={() => setView("edit")}>
+                <PenLine size={14} /> <span className="tb-label">Edit</span>
+              </button>
+              <button type="button" aria-pressed={view === "preview"} onClick={() => setView("preview")}>
+                <Eye size={14} /> <span className="tb-label">Preview</span>
+              </button>
+            </div>
+            <a className="btn btn-primary btn-sm" href={`/resumes/${resume.id}/pdf`} onClick={downloadPdf} title="Download PDF">
+              <Download size={15} /> <span className="tb-label">PDF</span>
             </a>
           </div>
         </div>
 
+        <div className="strength" aria-label="Resume strength">
+          <div className="strength-top">
+            <span>Resume strength</span>
+            <span className="row" style={{ gap: 8 }}>
+              <span className="badge badge-ai" title="AI provider">
+                <Sparkles size={11} /> {provider}
+              </span>
+              <span>{st.score}%</span>
+            </span>
+          </div>
+          <div className="strength-bar">
+            <span style={{ width: `${st.score}%` }} />
+          </div>
+          <div className="strength-tip">
+            <Lightbulb size={14} />
+            <span>{st.tip ?? "Looks great! Tailor it to a job description below before you apply."}</span>
+          </div>
+        </div>
+
         <div className="editor-body">
-          <SectionBox {...sectionProps} id="personal" title="Personal details">
+          <SectionBox {...sectionProps} id="personal" icon={UserRound} title="Personal details">
             <div className="grid-2">
               {(
                 [
@@ -407,17 +507,17 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
               <FieldBox label="Target role (used by AI)" placeholder="e.g. Data Engineer" value={d.target_role} onChange={(v) => update((x) => (x.target_role = v))} />
               {(
                 [
-                  ["linkedin", "LinkedIn"],
-                  ["github", "GitHub"],
-                  ["website", "Website"],
+                  ["linkedin", "LinkedIn", "linkedin.com/in/you"],
+                  ["github", "GitHub", "github.com/you"],
+                  ["website", "Website", "you.dev"],
                 ] as const
-              ).map(([f, label]) => (
-                <FieldBox key={f} label={label} value={d.personal[f]} onChange={(v) => update((x) => (x.personal[f] = v))} />
+              ).map(([f, label, ph]) => (
+                <FieldBox key={f} label={label} placeholder={ph} value={d.personal[f]} onChange={(v) => update((x) => (x.personal[f] = v))} />
               ))}
             </div>
           </SectionBox>
 
-          <SectionBox {...sectionProps} id="summary" title="Professional summary">
+          <SectionBox {...sectionProps} id="summary" icon={AlignLeft} title="Professional summary">
             <FieldBox
               label="Summary"
               textarea
@@ -426,12 +526,12 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
               value={d.summary}
               onChange={(v) => update((x) => (x.summary = v))}
             />
-            <div className="row" style={{ marginTop: 8 }}>
+            <div className="add-row" style={{ marginTop: 10 }}>
               <button className="btn btn-sm btn-ai" type="button" onClick={() => requestAI("summary", "summary")}>
-                ✨ Generate with AI
+                <Wand2 size={14} /> Generate with AI
               </button>
             </div>
-            <AiPanelBox state={ai["summary"]} onClose={() => closeAi("summary")}>
+            <AiPanelBox state={ai.summary} onClose={() => closeAi("summary")}>
               {(s) => (
                 <div className="ai-suggestion">
                   <p>{s}</p>
@@ -447,14 +547,14 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
           {listSection("projects")}
           {listSection("education")}
 
-          <SectionBox {...sectionProps} id="skills" title="Skills" count={d.skills.length}>
+          <SectionBox {...sectionProps} id="skills" icon={Wrench} title="Skills" count={d.skills.length}>
             {d.skills.map((g, i) => (
               <div className="item" key={i}>
                 <div className="item-head">
-                  Group {i + 1}
+                  <span className="item-name">{g.category || `Group ${i + 1}`}</span>
                   <span className="spacer" />
-                  <button className="icon-btn danger" type="button" title="Remove" onClick={() => removeItem("skills", i)}>
-                    🗑
+                  <button className="icon-btn sm danger" type="button" title="Remove" aria-label="Remove" onClick={() => removeItem("skills", i)}>
+                    <Trash2 size={15} />
                   </button>
                 </div>
                 <div className="grid-2" style={{ gridTemplateColumns: "1fr 2fr" }}>
@@ -463,15 +563,15 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
                 </div>
               </div>
             ))}
-            <div className="row" style={{ gap: 6 }}>
-              <button className="btn btn-sm" type="button" onClick={() => update((x) => x.skills.push({ category: "", items: [] }), 300)}>
-                + Skill group
+            <div className="add-row">
+              <button className="btn btn-sm btn-add" type="button" onClick={() => update((x) => x.skills.push({ category: "", items: [] }), 300)}>
+                <Plus size={14} /> Skill group
               </button>
               <button className="btn btn-sm btn-ai" type="button" onClick={() => requestAI("skills", "skills")}>
-                ✨ Suggest skills
+                <Sparkles size={14} /> Suggest skills
               </button>
             </div>
-            <AiPanelBox state={ai["skills"]} onClose={() => closeAi("skills")}>
+            <AiPanelBox state={ai.skills} onClose={() => closeAi("skills")} inline>
               {(s) => {
                 const have = d.skills.some((g) => g.items.some((x) => x.toLowerCase() === s.toLowerCase()));
                 return (
@@ -495,9 +595,10 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
 
           {listSection("certifications")}
 
-          <SectionBox {...sectionProps} id="achievements" title="Achievements" count={d.achievements.length}>
+          <SectionBox {...sectionProps} id="achievements" icon={Trophy} title="Achievements" count={d.achievements.length}>
             {d.achievements.map((a, j) => (
               <div className="bullet-row" key={j}>
+                <span className="bullet-dot" aria-hidden />
                 <textarea
                   aria-label={`Achievement ${j + 1}`}
                   value={a}
@@ -507,20 +608,20 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
                     update((x) => (x.achievements[j] = v));
                   }}
                 />
-                <button className="icon-btn danger" type="button" title="Remove" onClick={() => update((x) => x.achievements.splice(j, 1), 300)}>
-                  ✕
+                <button className="icon-btn danger" type="button" title="Remove" aria-label="Remove" onClick={() => update((x) => x.achievements.splice(j, 1), 300)}>
+                  <X size={16} />
                 </button>
               </div>
             ))}
-            <button className="btn btn-sm" type="button" onClick={() => update((x) => x.achievements.push(""), 300)}>
-              + Achievement
+            <button className="btn btn-sm btn-add" type="button" onClick={() => update((x) => x.achievements.push(""), 300)}>
+              <Plus size={14} /> Achievement
             </button>
           </SectionBox>
 
-          <SectionBox {...sectionProps} id="tailor" title="🎯 Tailor to a job description">
+          <SectionBox {...sectionProps} id="tailor" icon={Target} title="Tailor to a job description" ai>
             <label htmlFor="jd">Paste the job description</label>
             <textarea id="jd" rows={6} placeholder="Paste the full job posting here…" value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} />
-            <div className="row" style={{ marginTop: 8 }}>
+            <div className="add-row" style={{ marginTop: 10 }}>
               <button
                 className="btn btn-sm btn-ai"
                 type="button"
@@ -532,33 +633,38 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
                   requestAI("keywords", "jd");
                 }}
               >
-                Analyze match
+                <Target size={14} /> Analyze match
               </button>
             </div>
             {jd?.report ? (
               <div className="ai-panel">
                 <h4>
-                  🎯 Match report <span className="small muted">({jd.provider})</span>
-                  <button className="icon-btn close" type="button" title="Close" onClick={() => closeAi("jd")}>
-                    ✕
+                  <Target size={14} /> Match report <span className="small muted">({jd.provider})</span>
+                  <button className="icon-btn sm close" type="button" title="Close" aria-label="Close" onClick={() => closeAi("jd")}>
+                    <X size={15} />
                   </button>
                 </h4>
-                {jd.notice && <div className="ai-notice">{jd.notice}</div>}
+                {jd.notice && (
+                  <div className="ai-notice">
+                    <CircleAlert size={14} /> {jd.notice}
+                  </div>
+                )}
                 <div className="score">
-                  <div className="score-ring" style={{ ["--p" as string]: jd.report.score }}>
+                  <div
+                    className="score-ring"
+                    style={{ ["--p" as string]: jd.report.score, ["--c" as string]: jd.report.score >= 70 ? "var(--ok)" : jd.report.score >= 40 ? "var(--warn)" : "var(--err)" }}
+                  >
                     {jd.report.score}%
                   </div>
                   <div className="small">
-                    Keyword match with the job description.
+                    <strong>Keyword match with the job description</strong>
                     <br />
                     <span className="muted">Aim for 70%+, but only add skills you really have.</span>
                   </div>
                 </div>
                 {jd.report.missing.length > 0 && (
                   <>
-                    <div className="small" style={{ marginBottom: 4 }}>
-                      <b>Missing</b>
-                    </div>
+                    <div className="kw-group">Missing</div>
                     {jd.report.missing.map((k) => (
                       <span key={k} className="kw miss">
                         {k}
@@ -568,9 +674,7 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
                 )}
                 {jd.report.matched.length > 0 && (
                   <>
-                    <div className="small" style={{ margin: "6px 0 4px" }}>
-                      <b>Found</b>
-                    </div>
+                    <div className="kw-group">Found</div>
                     {jd.report.matched.map((k) => (
                       <span key={k} className="kw hit">
                         {k}
@@ -578,8 +682,8 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
                     ))}
                   </>
                 )}
-                <div className="small" style={{ margin: "10px 0 6px" }}>
-                  <b>Suggestions</b>
+                <div className="kw-group" style={{ marginBottom: 8, marginTop: 14 }}>
+                  Suggestions
                 </div>
                 {jd.suggestions.map((s, i) => (
                   <div className="ai-suggestion" key={i}>
@@ -588,7 +692,7 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
                 ))}
               </div>
             ) : (
-              <AiPanelBox state={ai["jd"]} onClose={() => closeAi("jd")}>
+              <AiPanelBox state={jd} onClose={() => closeAi("jd")}>
                 {(s) => (
                   <div className="ai-suggestion">
                     <p>{s}</p>
@@ -601,12 +705,162 @@ export function Editor({ resume, csrf, provider }: { resume: Resume; csrf: strin
       </section>
 
       <section className="preview-pane" ref={paneRef} aria-label="Live preview">
-        <div style={{ width: PAGE_W * scale, height: pageH * scale, flexShrink: 0 }}>
-          <div className="preview-frame preview-scaler" ref={pageRef} style={{ transform: `scale(${scale})` }}>
-            <ResumeView data={data} template={template} />
+        <div className="preview-stage">
+          <div style={{ width: PAGE_W * scale, height: pageH * scale, flexShrink: 0 }}>
+            <div className="preview-frame preview-scaler" ref={pageRef} style={{ transform: `scale(${scale})` }}>
+              <ResumeView data={data} template={template} />
+            </div>
           </div>
         </div>
+        <div className="zoom-bar" role="toolbar" aria-label="Zoom">
+          <button className="icon-btn sm" type="button" aria-label="Zoom out" title="Zoom out" onClick={() => stepZoom(-0.1)}>
+            <Minus size={15} />
+          </button>
+          <span className="val">{Math.round(scale * 100)}%</span>
+          <button className="icon-btn sm" type="button" aria-label="Zoom in" title="Zoom in" onClick={() => stepZoom(0.1)}>
+            <Plus size={15} />
+          </button>
+          <span className="sep" />
+          <button className="icon-btn sm" type="button" aria-label="Fit to width" title="Fit to width" onClick={() => setZoom("fit")}>
+            <Maximize2 size={14} />
+          </button>
+        </div>
       </section>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ presentational pieces
+// Defined at module level so React keeps the same component identity between renders
+// (otherwise inputs would remount and lose focus on every keystroke).
+
+function SectionBox({
+  id,
+  title,
+  icon: Icon,
+  count,
+  ai,
+  children,
+  open,
+  setOpen,
+}: {
+  id: string;
+  title: string;
+  icon: LucideIcon;
+  count?: number;
+  ai?: boolean;
+  children: ReactNode;
+  open: Set<string>;
+  setOpen: React.Dispatch<React.SetStateAction<Set<string>>>;
+}) {
+  return (
+    <details
+      className="ed-section"
+      open={open.has(id)}
+      onToggle={(e) => {
+        const isOpen = (e.currentTarget as HTMLDetailsElement).open;
+        setOpen((o) => {
+          if (o.has(id) === isOpen) return o;
+          const n = new Set(o);
+          if (isOpen) n.add(id);
+          else n.delete(id);
+          return n;
+        });
+      }}
+    >
+      <summary>
+        <span className={`sec-ic ${ai ? "ai" : ""}`}>
+          <Icon size={17} />
+        </span>
+        <span className="sec-title">{title}</span>
+        {count != null && <span className="sec-count">{count}</span>}
+        <ChevronDown size={18} className="chev" />
+      </summary>
+      <div className="section-body">{children}</div>
+    </details>
+  );
+}
+
+function AiPanelBox({
+  state: p,
+  onClose,
+  inline,
+  children,
+}: {
+  state: AIState | undefined;
+  onClose: () => void;
+  inline?: boolean;
+  children: (s: string, i: number) => ReactNode;
+}) {
+  if (!p) return null;
+  return (
+    <div className="ai-panel">
+      <h4>
+        <Sparkles size={14} /> AI suggestions {p.provider && <span className="small muted">({p.provider})</span>}
+        <button className="icon-btn sm close" type="button" title="Close" aria-label="Close" onClick={onClose}>
+          <X size={15} />
+        </button>
+      </h4>
+      {p.loading ? (
+        <>
+          <div className="ai-loading">
+            <LoaderCircle size={15} className="spin" /> Thinking…
+          </div>
+          <div className="shimmer" />
+          <div className="shimmer" style={{ width: "80%" }} />
+        </>
+      ) : p.error ? (
+        <div className="small row" style={{ color: "var(--err)", gap: 6 }}>
+          <CircleAlert size={15} /> {p.error}
+        </div>
+      ) : (
+        <>
+          {p.notice && (
+            <div className="ai-notice">
+              <CircleAlert size={14} /> {p.notice}
+            </div>
+          )}
+          {inline ? (
+            <div>
+              {p.suggestions.map((s, i) => (
+                <Fragment key={i}>{children(s, i)}</Fragment>
+              ))}
+            </div>
+          ) : (
+            p.suggestions.map((s, i) => <Fragment key={i}>{children(s, i)}</Fragment>)
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function FieldBox({
+  label,
+  value,
+  onChange,
+  placeholder,
+  textarea,
+  rows,
+  className,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  textarea?: boolean;
+  rows?: number;
+  className?: string;
+}) {
+  const id = useId();
+  return (
+    <div className={className}>
+      <label htmlFor={id}>{label}</label>
+      {textarea ? (
+        <textarea id={id} rows={rows ?? 3} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+      ) : (
+        <input id={id} type="text" value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+      )}
     </div>
   );
 }
@@ -629,106 +883,15 @@ function SkillsInput({ items, onChange }: { items: string[]; onChange: (items: s
     <div>
       <label htmlFor={id}>Skills (comma separated)</label>
       <input
-          id={id}
-          type="text"
-          value={draft}
-          placeholder="Python, SQL, Docker"
-          onChange={(e) => {
-            setDraft(e.target.value);
-            onChange(parse(e.target.value));
-          }}
-        />
-    </div>
-  );
-}
-
-// ------------------------------------------------------------------ presentational pieces
-// Defined at module level so React keeps the same component identity between renders
-// (otherwise inputs would remount and lose focus on every keystroke).
-
-function SectionBox({ id, title, count, children, open, setOpen }: {
-  id: string;
-  title: string;
-  count?: number;
-  children: ReactNode;
-  open: Set<string>;
-  setOpen: React.Dispatch<React.SetStateAction<Set<string>>>;
-}) {
-  return (
-    <details
-      className="section"
-      open={open.has(id)}
-      onToggle={(e) => {
-        const isOpen = (e.currentTarget as HTMLDetailsElement).open;
-        setOpen((o) => {
-          if (o.has(id) === isOpen) return o;
-          const n = new Set(o);
-          if (isOpen) n.add(id);
-          else n.delete(id);
-          return n;
-        });
-      }}
-    >
-      <summary>
-        {title} {count != null && <span className="count">({count})</span>}
-      </summary>
-      <div className="section-body">{children}</div>
-    </details>
-  );
-}
-
-function AiPanelBox({ state: p, onClose, children }: {
-  state: AIState | undefined;
-  onClose: () => void;
-  children: (s: string, i: number) => ReactNode;
-}) {
-  if (!p) return null;
-  return (
-    <div className="ai-panel">
-      <h4>
-        ✨ AI suggestions {p.provider && <span className="small muted">({p.provider})</span>}
-        <button className="icon-btn close" type="button" title="Close" onClick={onClose}>
-          ✕
-        </button>
-      </h4>
-      {p.loading ? (
-        <div className="small muted">
-          <span className="spinner" /> Thinking…
-        </div>
-      ) : p.error ? (
-        <div className="small" style={{ color: "var(--err)" }}>
-          {p.error}
-        </div>
-      ) : (
-        <>
-          {p.notice && <div className="ai-notice">{p.notice}</div>}
-          {p.suggestions.map((s, i) => (
-            <Fragment key={i}>{children(s, i)}</Fragment>
-          ))}
-        </>
-      )}
-    </div>
-  );
-}
-
-function FieldBox({ label, value, onChange, placeholder, textarea, rows, className }: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  textarea?: boolean;
-  rows?: number;
-  className?: string;
-}) {
-  const id = useId();
-  return (
-    <div className={className}>
-      <label htmlFor={id}>{label}</label>
-      {textarea ? (
-        <textarea id={id} rows={rows ?? 3} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
-      ) : (
-        <input id={id} type="text" value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
-      )}
+        id={id}
+        type="text"
+        value={draft}
+        placeholder="Python, SQL, Docker"
+        onChange={(e) => {
+          setDraft(e.target.value);
+          onChange(parse(e.target.value));
+        }}
+      />
     </div>
   );
 }
