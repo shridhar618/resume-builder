@@ -1,10 +1,32 @@
-# ResumeAI: AI-Powered Resume Builder
+<div align="center">
 
-A full-stack resume builder with user accounts, a profile that pre-fills new resumes, three templates with a live preview, AI writing suggestions, job-description matching and server-side PDF export.
+# ResumeAI
+
+**Write a better resume, tailor it to any job, and export an ATS-friendly PDF, with AI help that also works offline.**
+
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-better--sqlite3-003B57?logo=sqlite&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-vitest-6E9F18?logo=vitest&logoColor=white)
+[![Stars](https://img.shields.io/github/stars/shridhar618/resume-builder?style=social)](https://github.com/shridhar618/resume-builder/stargazers)
+
+[Features](#features) · [Screenshots](#screenshots) · [Quick start](#quick-start) · [AI setup](#ai-setup) · [Security](#security) · [Contributing](#contributing)
+
+![Editor](docs/editor.png)
+
+</div>
+
+ResumeAI is a full-stack resume builder with user accounts, a profile that pre-fills new resumes, three templates with a live preview, AI writing suggestions, job-description matching and server-side PDF export.
 
 **Stack:** Next.js 16 (App Router) · React 19 · TypeScript · SQLite (better-sqlite3) · @react-pdf/renderer · Vitest · Gemini / OpenAI / Anthropic over REST
 
-![Editor](docs/editor.png)
+### Why it's different
+
+- **Works without an API key.** A built-in rule-based engine rewrites weak bullets, suggests skills and drafts summaries, so the app is fully usable offline.
+- **Real PDFs, not screenshots.** The exported text is selectable and parseable by applicant tracking systems (ATS), and links stay clickable.
+- **Bring your own model.** Switch between Gemini, OpenAI and Anthropic with one environment variable.
+- **Security built in.** It uses scrypt password hashing, CSRF tokens, a nonce-based CSP, rate limiting and per-user ownership checks, and tests cover them.
 
 ## Features
 
@@ -17,6 +39,14 @@ A full-stack resume builder with user accounts, a profile that pre-fills new res
 | **AI suggestions** | ✨ Generate a summary · ✨ Improve bullet points (one by one or all at once) · ✨ Suggest skills for your target role. You apply each suggestion with one click. |
 | **Job match** | Paste a job description to get a keyword-match score, lists of matched and missing keywords, and tips for tailoring the resume. |
 | **PDF export** | Real, selectable text that ATS software can parse. Links are clickable. The PDF uses A4 and the file is named after you. |
+
+## Screenshots
+
+| Dashboard | Job match |
+|---|---|
+| ![Dashboard](docs/dashboard.png) | ![Job match](docs/job-match.png) |
+
+Sample exports: [Modern](docs/sample-modern.pdf) · [Classic](docs/sample-classic.pdf) · [Minimal](docs/sample-minimal.pdf)
 
 ## Quick start
 
@@ -132,3 +162,21 @@ Serve the app over HTTPS and set `SESSION_COOKIE_SECURE=true`. SQLite needs a pe
 - Cover-letter generation from the resume plus a job description
 - More templates (each one needs styles in `globals.css` under `.rv-<name>` and a theme in `src/lib/pdf.tsx`)
 - Register a Unicode TTF font such as Noto Sans for non-Latin scripts. The built-in PDF fonts only cover Western European characters.
+
+## Contributing
+
+Contributions are welcome. Any of the extensions above would make a good first pull request.
+
+1. Fork the repo and create a branch: `git checkout -b feature/my-change`
+2. Make your change, then run `npm test` and `npm run typecheck`
+3. Open a pull request that describes what you changed and why
+
+If you find a bug or have an idea, please [open an issue](https://github.com/shridhar618/resume-builder/issues).
+
+---
+
+<div align="center">
+
+If ResumeAI helped you land an interview, please consider giving it a ⭐. It helps other people find the project.
+
+</div>
