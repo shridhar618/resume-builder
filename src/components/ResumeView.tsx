@@ -4,8 +4,25 @@ import { CONTACT_FIELDS, LINK_FIELDS, dates, href, joinTruthy, type ResumeData, 
  * HTML rendering of a resume, used for the editor's live preview and dashboard thumbnails.
  * Template styling lives in globals.css under .rv-<template>. React escapes all text.
  */
-export function ResumeView({ data: r, template }: { data: ResumeData; template: TemplateKey }) {
+export function ResumeView({
+  data: r,
+  template,
+  links = true,
+}: {
+  data: ResumeData;
+  template: TemplateKey;
+  /** false when the resume is rendered inside another link (thumbnails): <a> can't nest. */
+  links?: boolean;
+}) {
   const p = r.personal;
+  const A = ({ to, className, children }: { to: string; className?: string; children: string }) =>
+    links ? (
+      <a className={className} href={href(to)}>
+        {children}
+      </a>
+    ) : (
+      <span className={className}>{children}</span>
+    );
   const contacts = CONTACT_FIELDS.filter((f) => p[f]);
   const empty = !(r.summary || r.experience.length || r.projects.length || r.education.length || r.skills.length);
 
@@ -16,7 +33,7 @@ export function ResumeView({ data: r, template }: { data: ResumeData; template: 
         {p.headline && <div className="headline">{p.headline}</div>}
         <div className="contact">
           {contacts.map((f) => (
-            <span key={f}>{LINK_FIELDS.has(f) ? <a href={href(p[f])}>{p[f]}</a> : p[f]}</span>
+            <span key={f}>{LINK_FIELDS.has(f) ? <A to={p[f]}>{p[f]}</A> : p[f]}</span>
           ))}
         </div>
       </div>
@@ -66,9 +83,9 @@ export function ResumeView({ data: r, template }: { data: ResumeData; template: 
                         {pr.tech}
                         {pr.tech && pr.link && " · "}
                         {pr.link && (
-                          <a className="link" href={href(pr.link)}>
+                          <A className="link" to={pr.link}>
                             {pr.link}
-                          </a>
+                          </A>
                         )}
                       </div>
                     )}
