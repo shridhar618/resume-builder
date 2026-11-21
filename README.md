@@ -180,3 +180,7 @@ If you find a bug or have an idea, please [open an issue](https://github.com/shr
 If ResumeAI helped you land an interview, please consider giving it a ⭐. It helps other people find the project.
 
 </div>
+
+## License
+
+MIT. See [LICENSE](LICENSE).
