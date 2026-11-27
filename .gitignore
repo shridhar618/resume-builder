@@ -20,3 +20,6 @@ __pycache__/
 venv/
 
 .DS_Store
+.vercel
+.env*
+!.env.example
