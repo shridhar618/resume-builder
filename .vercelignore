@@ -1,0 +1,8 @@
+# Keep local-only files out of `vercel deploy` uploads.
+# Settings for the live site come from Vercel's Environment Variables, not .env files.
+.env
+.env.*
+!.env.example
+instance/
+.venv/
+.DS_Store
