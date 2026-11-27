@@ -4,6 +4,9 @@ import path from "node:path";
 export function config() {
   const env = process.env;
   return {
+    // Hosted libSQL / Turso database (required on Vercel). Leave unset to use the local file.
+    databaseUrl: env.TURSO_DATABASE_URL || "",
+    databaseAuthToken: env.TURSO_AUTH_TOKEN || "",
     databasePath: env.DATABASE_PATH || path.join(process.cwd(), "instance", "resume_builder.db"),
     cookieSecure: (env.SESSION_COOKIE_SECURE || "false").toLowerCase() === "true",
     sessionMaxAgeSeconds: 60 * 60 * 24 * 7, // 7 days

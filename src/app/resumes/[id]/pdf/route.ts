@@ -8,7 +8,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const url = new URL(req.url);
   const session = await getSession();
   if (!session) return NextResponse.redirect(new URL(`/login?next=${encodeURIComponent(url.pathname)}`, url));
-  const resume = getOwnedResume(session.user.id, Number(id));
+  const resume = await getOwnedResume(session.user.id, Number(id));
   if (!resume) return new NextResponse("Not found", { status: 404 });
 
   const pdf = await renderPdf(resume.data, resume.template, resume.title);

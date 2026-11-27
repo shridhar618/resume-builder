@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   // Native / Node-only packages stay out of the bundle.
-  serverExternalPackages: ["better-sqlite3", "@react-pdf/renderer"],
+  serverExternalPackages: ["@libsql/client", "@react-pdf/renderer"],
   poweredByHeader: false,
   // Pin the workspace root (a stray lockfile higher up the tree would otherwise be picked).
   turbopack: { root: import.meta.dirname },
