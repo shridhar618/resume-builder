@@ -32,7 +32,7 @@ function ago(sqliteUtc: string): string {
 
 export default async function Dashboard() {
   const { user } = await requireUser("/dashboard");
-  const resumes = listResumes(user.id);
+  const resumes = await listResumes(user.id);
   const provider = activeProvider();
   const firstName = user.name.split(/\s+/)[0];
 

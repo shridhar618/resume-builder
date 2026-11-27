@@ -7,7 +7,7 @@
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
-![SQLite](https://img.shields.io/badge/SQLite-better--sqlite3-003B57?logo=sqlite&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-libSQL%20%2F%20Turso-003B57?logo=sqlite&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-vitest-6E9F18?logo=vitest&logoColor=white)
 [![Stars](https://img.shields.io/github/stars/shridhar618/resume-builder?style=social)](https://github.com/shridhar618/resume-builder/stargazers)
 
@@ -19,7 +19,7 @@
 
 ResumeAI is a full-stack resume builder with user accounts, a profile that pre-fills new resumes, three templates with a live preview, AI writing suggestions, job-description matching and server-side PDF export.
 
-**Stack:** Next.js 16 (App Router) · React 19 · TypeScript · SQLite (better-sqlite3) · @react-pdf/renderer · Vitest · Gemini / OpenAI / Anthropic over REST
+**Stack:** Next.js 16 (App Router) · React 19 · TypeScript · SQLite via libSQL (local file or Turso) · @react-pdf/renderer · Vitest · Gemini / OpenAI / Anthropic over REST
 
 ### Why it's different
 
@@ -96,7 +96,7 @@ resume-builder/
 │   │   ├── ResumeView.tsx          # HTML rendering of the three templates
 │   │   └── client.tsx              # small client pieces (dialogs, confirm forms, flashes)
 │   └── lib/
-│       ├── db.ts                   # SQLite schema + connection
+│       ├── db.ts                   # SQLite/libSQL schema + connection
 │       ├── session.ts              # DB-backed sessions, login/logout, safe redirects
 │       ├── password.ts             # scrypt hashing
 │       ├── rateLimit.ts            # sliding-window limiter
@@ -147,13 +147,37 @@ Forms (sign in, profile, create/duplicate/delete) use Next.js server actions rat
 
 ## Deploying
 
+### Vercel (recommended)
+
+Vercel functions can't keep files, so in production the app uses a hosted **Turso** (libSQL) database instead of `instance/resume_builder.db`. It's the same SQLite dialect, so no code changes are needed between local and production.
+
+1. **Create a database.** Sign up at [turso.tech](https://turso.tech) (free tier), create a database, and copy its URL (`libsql://…`) and an auth token.
+   Or, in Vercel: Project → Storage → Marketplace → **Turso**, which sets both variables for you.
+2. **Import the repo in Vercel** (vercel.com → Add New → Project → pick `resume-builder`).
+3. **Add environment variables** in Project → Settings → Environment Variables:
+
+   | Variable | Value |
+   |---|---|
+   | `TURSO_DATABASE_URL` | `libsql://your-db-name.turso.io` |
+   | `TURSO_AUTH_TOKEN` | your Turso token |
+   | `SESSION_COOKIE_SECURE` | `true` |
+   | `GEMINI_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) | your AI key (optional — without one the app uses offline suggestions) |
+
+4. **Deploy.** The tables are created automatically on the first request.
+
+Locally, leave `TURSO_DATABASE_URL` unset and the app keeps using `instance/resume_builder.db`.
+
+### Your own server
+
 ```bash
 npm ci
 npm run build
 PORT=8000 npm start
 ```
 
-Serve the app over HTTPS and set `SESSION_COOKIE_SECURE=true`. SQLite needs a persistent disk, so run the app on a VM, a container with a volume, or a platform such as Railway or Fly.io. Serverless hosts such as Vercel need the database moved to a hosted one (Turso/libSQL or Postgres) first. The rate limiter keeps its counts in memory, so if you run more than one server process, move it to Redis.
+Serve the app over HTTPS and set `SESSION_COOKIE_SECURE=true`. Without `TURSO_DATABASE_URL`, the SQLite file needs a persistent disk (a VM or a container with a volume).
+
+The login and AI rate limiters keep their counts in memory, so on Vercel (or with several server processes) each instance counts separately. Move them to Redis (e.g. Upstash) if you need strict limits.
 
 ## Possible extensions
 

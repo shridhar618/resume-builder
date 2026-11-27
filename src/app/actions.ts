@@ -6,7 +6,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { config } from "@/lib/config";
-import { getDb } from "@/lib/db";
+import { batch, one, run } from "@/lib/db";
 import { flash } from "@/lib/flash";
 import { dummyHash, hashPassword, validatePassword, verifyPassword } from "@/lib/password";
 import { limiter } from "@/lib/rateLimit";
@@ -37,16 +37,22 @@ export async function registerAction(_prev: FormState, fd: FormData): Promise<Fo
   else error = validatePassword(password);
   if (error) return { error, values };
 
-  const db = getDb();
-  if (db.prepare("SELECT 1 FROM users WHERE email = ?").get(email))
+  if (await one("SELECT 1 FROM users WHERE email = ?", [email]))
     return { error: "An account with that email already exists.", values };
 
   const hash = await hashPassword(password);
-  const uid = db.transaction(() => {
-    const id = Number(db.prepare("INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)").run(email, name, hash).lastInsertRowid);
-    db.prepare("INSERT INTO profiles (user_id, full_name, email) VALUES (?, ?, ?)").run(id, name, email);
-    return id;
-  })();
+  let uid: number;
+  try {
+    // One transaction: the profile row uses the id the users INSERT just created.
+    const [res] = await batch([
+      { sql: "INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)", args: [email, name, hash] },
+      { sql: "INSERT INTO profiles (user_id, full_name, email) VALUES (last_insert_rowid(), ?, ?)", args: [name, email] },
+    ]);
+    uid = Number(res.lastInsertRowid);
+  } catch {
+    // Lost a race with another sign-up for the same email (UNIQUE constraint).
+    return { error: "An account with that email already exists.", values };
+  }
   await login(uid);
   await flash("success", "Welcome! Fill in your profile — it pre-fills every new resume.");
   redirect("/profile");
@@ -62,14 +68,12 @@ export async function loginAction(_prev: FormState, fd: FormData): Promise<FormS
   if (limiter.isBlocked(key, cfg.loginMaxAttempts, cfg.loginWindowSeconds))
     return { error: "Too many failed attempts. Try again in 15 minutes.", values: { email } };
 
-  const user = getDb().prepare("SELECT id, password_hash FROM users WHERE email = ?").get(email) as
-    | { id: number; password_hash: string }
-    | undefined;
+  const user = await one<{ id: number; password_hash: string }>("SELECT id, password_hash FROM users WHERE email = ?", [email]);
   // Always run a hash comparison so response time doesn't reveal whether the email exists.
   const ok = await verifyPassword(user ? user.password_hash : await dummyHash(), password);
   if (user && ok) {
     limiter.reset(key);
-    await login(user.id);
+    await login(Number(user.id));
     redirect(safeNext(field(fd, "next")));
   }
   limiter.hit(key, 10_000, cfg.loginWindowSeconds); // record the failure
@@ -84,7 +88,7 @@ export async function logoutAction() {
 
 export async function changePasswordAction(fd: FormData) {
   const { user } = await requireUser("/profile");
-  const row = getDb().prepare("SELECT password_hash FROM users WHERE id = ?").get(user.id) as { password_hash: string };
+  const row = (await one<{ password_hash: string }>("SELECT password_hash FROM users WHERE id = ?", [user.id]))!;
   const next = field(fd, "new");
   let err: string | null;
   if (!(await verifyPassword(row.password_hash, field(fd, "current")))) err = "Current password is incorrect.";
@@ -92,7 +96,7 @@ export async function changePasswordAction(fd: FormData) {
   if (err) {
     await flash("error", err);
   } else {
-    getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(await hashPassword(next), user.id);
+    await run("UPDATE users SET password_hash = ? WHERE id = ?", [await hashPassword(next), user.id]);
     await flash("success", "Password updated.");
   }
   redirect("/profile");
@@ -100,12 +104,18 @@ export async function changePasswordAction(fd: FormData) {
 
 export async function deleteAccountAction(fd: FormData) {
   const { user } = await requireUser("/profile");
-  const row = getDb().prepare("SELECT password_hash FROM users WHERE id = ?").get(user.id) as { password_hash: string };
+  const row = (await one<{ password_hash: string }>("SELECT password_hash FROM users WHERE id = ?", [user.id]))!;
   if (!(await verifyPassword(row.password_hash, field(fd, "password")))) {
     await flash("error", "Password is incorrect — account not deleted.");
     redirect("/profile");
   }
-  getDb().prepare("DELETE FROM users WHERE id = ?").run(user.id); // cascades to profile, resumes, sessions
+  // Delete child rows explicitly: a hosted database connection may not have foreign_keys
+  // switched on, so ON DELETE CASCADE can't be relied on.
+  await batch(
+    ["sessions", "resumes", "profiles"]
+      .map((t) => ({ sql: `DELETE FROM ${t} WHERE user_id = ?`, args: [user.id] }))
+      .concat({ sql: "DELETE FROM users WHERE id = ?", args: [user.id] }),
+  );
   await logout();
   await flash("success", "Your account and all resumes were deleted.");
   redirect("/register");
@@ -117,12 +127,12 @@ const PROFILE_FIELDS = ["full_name", "headline", "email", "phone", "location", "
 export async function saveProfileAction(fd: FormData) {
   const { user } = await requireUser("/profile");
   const values = PROFILE_FIELDS.map((f) => field(fd, f).trim().slice(0, f === "summary" ? 2000 : 300));
-  const db = getDb();
-  db.prepare(
+  await run(
     `UPDATE profiles SET ${PROFILE_FIELDS.map((f) => `${f} = ?`).join(", ")}, updated_at = datetime('now') WHERE user_id = ?`,
-  ).run(...values, user.id);
+    [...values, user.id],
+  );
   const fullName = values[0];
-  if (fullName) db.prepare("UPDATE users SET name = ? WHERE id = ?").run(fullName.slice(0, 100), user.id);
+  if (fullName) await run("UPDATE users SET name = ? WHERE id = ?", [fullName.slice(0, 100), user.id]);
   await flash("success", "Profile saved.");
   revalidatePath("/", "layout");
   redirect("/profile");
@@ -131,7 +141,7 @@ export async function saveProfileAction(fd: FormData) {
 // ------------------------------------------------------------------ resumes
 export async function createResumeAction(fd: FormData) {
   const { user } = await requireUser("/dashboard");
-  const id = createResume(user.id, {
+  const id = await createResume(user.id, {
     title: field(fd, "title"),
     template: field(fd, "template"),
     startFrom: field(fd, "start_from"),
@@ -141,7 +151,7 @@ export async function createResumeAction(fd: FormData) {
 
 export async function duplicateResumeAction(fd: FormData) {
   const { user } = await requireUser("/dashboard");
-  const id = duplicateResume(user.id, Number(field(fd, "id")));
+  const id = await duplicateResume(user.id, Number(field(fd, "id")));
   if (id === null) {
     await flash("error", "That resume doesn't exist (or isn't yours).");
     redirect("/dashboard");
@@ -152,7 +162,7 @@ export async function duplicateResumeAction(fd: FormData) {
 
 export async function deleteResumeAction(fd: FormData) {
   const { user } = await requireUser("/dashboard");
-  const ok = deleteResume(user.id, Number(field(fd, "id")));
+  const ok = await deleteResume(user.id, Number(field(fd, "id")));
   await flash(ok ? "success" : "error", ok ? "Resume deleted." : "That resume doesn't exist (or isn't yours).");
   revalidatePath("/dashboard");
   redirect("/dashboard");

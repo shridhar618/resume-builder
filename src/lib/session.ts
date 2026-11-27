@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { config } from "./config";
-import { getDb, type UserRow } from "./db";
+import { batch, one, run, type UserRow } from "./db";
 
 /*
  * Server-side sessions. The cookie holds a random token; the DB stores only its SHA-256,
@@ -18,34 +18,32 @@ const randomToken = () => crypto.randomBytes(32).toString("base64url");
 export type Session = { user: UserRow; csrf: string };
 
 // ------------------------------------------------------------------ DB layer (no request context)
-export function createSessionRecord(userId: number): string {
+export async function createSessionRecord(userId: number): Promise<string> {
   const token = randomToken();
-  const expires = Math.floor(Date.now() / 1000) + config().sessionMaxAgeSeconds;
-  const db = getDb();
-  db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(Math.floor(Date.now() / 1000));
-  db.prepare("INSERT INTO sessions (token_hash, user_id, csrf, expires_at) VALUES (?, ?, ?, ?)").run(
-    sha256(token),
-    userId,
-    randomToken(),
-    expires,
-  );
+  const now = Math.floor(Date.now() / 1000);
+  await batch([
+    { sql: "DELETE FROM sessions WHERE expires_at < ?", args: [now] },
+    {
+      sql: "INSERT INTO sessions (token_hash, user_id, csrf, expires_at) VALUES (?, ?, ?, ?)",
+      args: [sha256(token), userId, randomToken(), now + config().sessionMaxAgeSeconds],
+    },
+  ]);
   return token;
 }
 
-export function lookupSession(token: string | undefined): Session | null {
+export async function lookupSession(token: string | undefined): Promise<Session | null> {
   if (!token) return null;
-  const row = getDb()
-    .prepare(
-      `SELECT u.id, u.email, u.name, s.csrf FROM sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = ? AND s.expires_at > ?`,
-    )
-    .get(sha256(token), Math.floor(Date.now() / 1000)) as (UserRow & { csrf: string }) | undefined;
+  const row = await one<UserRow & { csrf: string }>(
+    `SELECT u.id, u.email, u.name, s.csrf FROM sessions s JOIN users u ON u.id = s.user_id
+     WHERE s.token_hash = ? AND s.expires_at > ?`,
+    [sha256(token), Math.floor(Date.now() / 1000)],
+  );
   if (!row) return null;
-  return { user: { id: row.id, email: row.email, name: row.name }, csrf: row.csrf };
+  return { user: { id: Number(row.id), email: row.email, name: row.name }, csrf: row.csrf };
 }
 
-export function destroySessionRecord(token: string | undefined) {
-  if (token) getDb().prepare("DELETE FROM sessions WHERE token_hash = ?").run(sha256(token));
+export async function destroySessionRecord(token: string | undefined) {
+  if (token) await run("DELETE FROM sessions WHERE token_hash = ?", [sha256(token)]);
 }
 
 // ------------------------------------------------------------------ request helpers
@@ -63,8 +61,8 @@ export async function requireUser(nextPath?: string): Promise<Session> {
 /** Start a fresh session (new token on every login prevents session fixation). */
 export async function login(userId: number) {
   const jar = await cookies();
-  destroySessionRecord(jar.get(SESSION_COOKIE)?.value);
-  jar.set(SESSION_COOKIE, createSessionRecord(userId), {
+  await destroySessionRecord(jar.get(SESSION_COOKIE)?.value);
+  jar.set(SESSION_COOKIE, await createSessionRecord(userId), {
     httpOnly: true,
     sameSite: "lax",
     secure: config().cookieSecure,
@@ -75,7 +73,7 @@ export async function login(userId: number) {
 
 export async function logout() {
   const jar = await cookies();
-  destroySessionRecord(jar.get(SESSION_COOKIE)?.value);
+  await destroySessionRecord(jar.get(SESSION_COOKIE)?.value);
   jar.delete(SESSION_COOKIE);
 }
 

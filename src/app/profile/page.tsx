@@ -40,7 +40,7 @@ function Panel({ id, icon, title, desc, children, className = "" }: { id: string
 
 export default async function ProfilePage() {
   const { user } = await requireUser("/profile");
-  const profile = (getProfile(user.id) ?? {}) as Record<string, string | null>;
+  const profile = ((await getProfile(user.id)) ?? {}) as Record<string, string | null>;
   const field = ([name, label, type, placeholder]: F) => (
     <div key={name}>
       <label htmlFor={name}>{label}</label>

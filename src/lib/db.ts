@@ -1,5 +1,5 @@
 import "server-only";
-import Database from "better-sqlite3";
+import { createClient, type Client, type InValue, type ResultSet } from "@libsql/client";
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config";
@@ -50,21 +50,68 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 `;
 
-// One connection per process (better-sqlite3 is synchronous). Cached on globalThis so
-// Next's dev-mode hot reload doesn't open a new handle on every edit.
-const g = globalThis as unknown as { __resumeDb?: { path: string; db: Database.Database } };
+// libSQL client: a local SQLite file in development (same file as before), or a hosted
+// Turso database in production (Vercel functions can't keep files between requests).
+// Cached on globalThis so Next's dev-mode hot reload doesn't open a new handle on every edit.
+type Cached = { key: string; client: Client; ready: Promise<void> };
+const g = globalThis as unknown as { __resumeDb?: Cached };
 
-export function getDb(): Database.Database {
-  const file = config().databasePath;
-  if (g.__resumeDb && g.__resumeDb.path === file) return g.__resumeDb.db;
-  g.__resumeDb?.db.close();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const db = new Database(file);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  db.exec(SCHEMA);
-  g.__resumeDb = { path: file, db };
-  return db;
+function open(): Cached {
+  const cfg = config();
+  const key = cfg.databaseUrl || `file:${cfg.databasePath}`;
+  if (g.__resumeDb && g.__resumeDb.key === key) return g.__resumeDb;
+  g.__resumeDb?.client.close();
+  let client: Client;
+  let ready: Promise<void>;
+  if (cfg.databaseUrl) {
+    client = createClient({ url: cfg.databaseUrl, authToken: cfg.databaseAuthToken || undefined });
+    ready = client.executeMultiple(SCHEMA);
+  } else {
+    fs.mkdirSync(path.dirname(cfg.databasePath), { recursive: true });
+    client = createClient({ url: key });
+    ready = client.executeMultiple(`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; ${SCHEMA}`);
+  }
+  // If creating the schema fails (e.g. bad credentials), retry on the next request.
+  ready = ready.catch((e) => {
+    if (g.__resumeDb?.client === client) g.__resumeDb = undefined;
+    throw e;
+  });
+  g.__resumeDb = { key, client, ready };
+  return g.__resumeDb;
+}
+
+/** The database client, with the schema created. */
+export async function getDb(): Promise<Client> {
+  const c = open();
+  await c.ready;
+  return c.client;
+}
+
+export type Stmt = { sql: string; args?: InValue[] };
+
+function toObjects<T>(rs: ResultSet): T[] {
+  return rs.rows.map((row) => Object.fromEntries(rs.columns.map((col, i) => [col, row[i]])) as T);
+}
+
+/** First matching row, or null. */
+export async function one<T>(sql: string, args: InValue[] = []): Promise<T | null> {
+  return toObjects<T>(await (await getDb()).execute({ sql, args }))[0] ?? null;
+}
+
+/** All matching rows. */
+export async function all<T>(sql: string, args: InValue[] = []): Promise<T[]> {
+  return toObjects<T>(await (await getDb()).execute({ sql, args }));
+}
+
+/** Run a write. Returns rows changed and the new row id (for INSERTs). */
+export async function run(sql: string, args: InValue[] = []): Promise<{ changes: number; lastId: number }> {
+  const rs = await (await getDb()).execute({ sql, args });
+  return { changes: rs.rowsAffected, lastId: Number(rs.lastInsertRowid ?? 0) };
+}
+
+/** Run several writes in one transaction (all succeed or none do). */
+export async function batch(stmts: Stmt[]): Promise<ResultSet[]> {
+  return (await getDb()).batch(stmts.map((s) => ({ sql: s.sql, args: s.args ?? [] })), "write");
 }
 
 export type UserRow = { id: number; email: string; name: string };

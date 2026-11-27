@@ -22,7 +22,7 @@ afterEach(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-const { getDb } = await import("@/lib/db");
+const { one, run } = await import("@/lib/db");
 const { hashPassword, verifyPassword, validatePassword } = await import("@/lib/password");
 const { createSessionRecord, lookupSession, destroySessionRecord, safeNext } = await import("@/lib/session");
 const rm = await import("@/lib/resumeModel");
@@ -32,12 +32,12 @@ const { renderPdf, pdfText } = await import("@/lib/pdf");
 const { limiter } = await import("@/lib/rateLimit");
 
 async function makeUser(email = "a@example.com", name = "Asha") {
-  const db = getDb();
-  const id = Number(
-    db.prepare("INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)").run(email, name, await hashPassword("secret123"))
-      .lastInsertRowid,
-  );
-  db.prepare("INSERT INTO profiles (user_id, full_name, email) VALUES (?, ?, ?)").run(id, name, email);
+  const { lastId: id } = await run("INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)", [
+    email,
+    name,
+    await hashPassword("secret123"),
+  ]);
+  await run("INSERT INTO profiles (user_id, full_name, email) VALUES (?, ?, ?)", [id, name, email]);
   return id;
 }
 
@@ -71,24 +71,24 @@ describe("passwords", () => {
 describe("sessions", () => {
   it("creates, looks up and destroys sessions; stores only a hash", async () => {
     const uid = await makeUser();
-    const token = createSessionRecord(uid);
-    const s = lookupSession(token);
+    const token = await createSessionRecord(uid);
+    const s = await lookupSession(token);
     expect(s?.user.id).toBe(uid);
     expect(s?.csrf.length).toBeGreaterThan(20);
-    const stored = getDb().prepare("SELECT token_hash FROM sessions").get() as { token_hash: string };
+    const stored = (await one<{ token_hash: string }>("SELECT token_hash FROM sessions"))!;
     expect(stored.token_hash).not.toBe(token);
-    destroySessionRecord(token);
-    expect(lookupSession(token)).toBeNull();
-    expect(lookupSession("forged")).toBeNull();
+    await destroySessionRecord(token);
+    expect(await lookupSession(token)).toBeNull();
+    expect(await lookupSession("forged")).toBeNull();
   });
 
   it("drops sessions when the account is deleted", async () => {
     const uid = await makeUser();
-    const token = createSessionRecord(uid);
-    resumes.createResume(uid, { startFrom: "sample" });
-    getDb().prepare("DELETE FROM users WHERE id = ?").run(uid);
-    expect(lookupSession(token)).toBeNull();
-    expect((getDb().prepare("SELECT COUNT(*) n FROM resumes").get() as { n: number }).n).toBe(0);
+    const token = await createSessionRecord(uid);
+    await resumes.createResume(uid, { startFrom: "sample" });
+    await run("DELETE FROM users WHERE id = ?", [uid]);
+    expect(await lookupSession(token)).toBeNull();
+    expect((await one<{ n: number }>("SELECT COUNT(*) n FROM resumes"))!.n).toBe(0);
   });
 
   it("blocks open redirects", () => {
@@ -113,24 +113,24 @@ describe("resumes", () => {
   it("users cannot access each other's resumes", async () => {
     const a = await makeUser("a@example.com");
     const b = await makeUser("b@example.com");
-    const rid = resumes.createResume(a, { startFrom: "sample" });
-    expect(resumes.getOwnedResume(b, rid)).toBeNull();
-    expect(resumes.saveResume(b, rid, { title: "pwned" }).status).toBe(404);
-    expect(resumes.duplicateResume(b, rid)).toBeNull();
-    expect(resumes.deleteResume(b, rid)).toBe(false);
-    expect(resumes.getOwnedResume(a, rid)?.title).toBe("Untitled resume");
+    const rid = await resumes.createResume(a, { startFrom: "sample" });
+    expect(await resumes.getOwnedResume(b, rid)).toBeNull();
+    expect((await resumes.saveResume(b, rid, { title: "pwned" })).status).toBe(404);
+    expect(await resumes.duplicateResume(b, rid)).toBeNull();
+    expect(await resumes.deleteResume(b, rid)).toBe(false);
+    expect((await resumes.getOwnedResume(a, rid))?.title).toBe("Untitled resume");
   });
 
   it("new resume is pre-filled from the profile", async () => {
     const uid = await makeUser("a@example.com", "Asha Rao");
-    const rid = resumes.createResume(uid, { title: "T", startFrom: "profile" });
-    expect(resumes.getOwnedResume(uid, rid)?.data.personal.full_name).toBe("Asha Rao");
+    const rid = await resumes.createResume(uid, { title: "T", startFrom: "profile" });
+    expect((await resumes.getOwnedResume(uid, rid))?.data.personal.full_name).toBe("Asha Rao");
   });
 
   it("save normalises untrusted input", async () => {
     const uid = await makeUser();
-    const rid = resumes.createResume(uid, { startFrom: "sample" });
-    const r = resumes.saveResume(uid, rid, {
+    const rid = await resumes.createResume(uid, { startFrom: "sample" });
+    const r = await resumes.saveResume(uid, rid, {
       title: "T",
       template: "classic",
       data: {
@@ -151,25 +151,25 @@ describe("resumes", () => {
 
   it("rejects unknown templates and non-object bodies", async () => {
     const uid = await makeUser();
-    const rid = resumes.createResume(uid, {});
-    expect(resumes.saveResume(uid, rid, { template: "../../etc" }).status).toBe(400);
-    expect(resumes.saveResume(uid, rid, { template: "constructor" }).status).toBe(400);
-    expect(resumes.saveResume(uid, rid, [1, 2]).status).toBe(400);
+    const rid = await resumes.createResume(uid, {});
+    expect((await resumes.saveResume(uid, rid, { template: "../../etc" })).status).toBe(400);
+    expect((await resumes.saveResume(uid, rid, { template: "constructor" })).status).toBe(400);
+    expect((await resumes.saveResume(uid, rid, [1, 2])).status).toBe(400);
   });
 
   it("duplicates and deletes", async () => {
     const uid = await makeUser();
-    const rid = resumes.createResume(uid, { title: "Mine", startFrom: "sample" });
-    const copy = resumes.duplicateResume(uid, rid)!;
-    expect(resumes.getOwnedResume(uid, copy)?.title).toBe("Mine (copy)");
-    expect(resumes.deleteResume(uid, rid)).toBe(true);
-    expect(resumes.getOwnedResume(uid, rid)).toBeNull();
-    expect(resumes.listResumes(uid).map((r) => r.id)).toEqual([copy]);
+    const rid = await resumes.createResume(uid, { title: "Mine", startFrom: "sample" });
+    const copy = (await resumes.duplicateResume(uid, rid))!;
+    expect((await resumes.getOwnedResume(uid, copy))?.title).toBe("Mine (copy)");
+    expect(await resumes.deleteResume(uid, rid)).toBe(true);
+    expect(await resumes.getOwnedResume(uid, rid)).toBeNull();
+    expect((await resumes.listResumes(uid)).map((r) => r.id)).toEqual([copy]);
   });
 
   it("builds the PDF filename from the person's name", async () => {
     const uid = await makeUser();
-    const r = resumes.getOwnedResume(uid, resumes.createResume(uid, { startFrom: "sample" }))!;
+    const r = (await resumes.getOwnedResume(uid, await resumes.createResume(uid, { startFrom: "sample" })))!;
     expect(resumes.pdfFilename(r)).toBe("Aarav_Sharma_Resume.pdf");
   });
 });
