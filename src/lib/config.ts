@@ -7,7 +7,11 @@ export function config() {
     // Hosted libSQL / Turso database (required on Vercel). Leave unset to use the local file.
     databaseUrl: env.TURSO_DATABASE_URL || "",
     databaseAuthToken: env.TURSO_AUTH_TOKEN || "",
-    databasePath: env.DATABASE_PATH || path.join(process.cwd(), "instance", "resume_builder.db"),
+    // On Vercel without Turso, only /tmp is writable: the app works as a demo, but data is
+    // temporary (lost when the function instance is recycled). Set TURSO_* to keep data.
+    databasePath:
+      env.DATABASE_PATH ||
+      (env.VERCEL ? "/tmp/resume_builder.db" : path.join(process.cwd(), "instance", "resume_builder.db")),
     cookieSecure: (env.SESSION_COOKIE_SECURE || "false").toLowerCase() === "true",
     sessionMaxAgeSeconds: 60 * 60 * 24 * 7, // 7 days
 
